@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Définir le chemin vers FFmpeg
-FFMPEG_PATH = r"C:\Users\MehdiBENKHELIFA\Downloads\ffmpeg-2024-11-25-git-04ce01df0b-essentials_build\ffmpeg-2024-11-25-git-04ce01df0b-essentials_build\bin\ffmpeg.exe"
+FFMPEG_PATH = r"C:\ffmpeg\ffmpeg-2024-11-25-git-04ce01df0b-essentials_build\bin\ffmpeg.exe"
 
 # Vérification manuelle de FFmpeg
 if not os.path.exists(FFMPEG_PATH):
@@ -25,6 +25,37 @@ intents.message_content = True
 
 # Configurer le bot
 bot = commands.Bot(command_prefix='!', intents=intents)
+
+# Queue de musique
+music_queue = []
+
+# Fonction pour jouer de la musique
+async def play_music(ctx):
+    if not music_queue:
+        return
+
+    song = music_queue[0]  # Prendre la première chanson dans la queue
+    music_queue.pop(0)  # Retirer la chanson de la queue
+
+    # Joue la musique
+    try:
+        ydl_opts = {'format': 'bestaudio'}
+        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(song['url'], download=False)
+            url2 = info['url']
+
+            voice = ctx.voice_client
+            voice.play(discord.FFmpegPCMAudio(url2, executable=FFMPEG_PATH), after=lambda e: print(f"Erreur : {e}" if e else "Lecture terminée"))
+
+            await ctx.send(f"En train de jouer : **{info['title']}**")
+        
+        while voice.is_playing():  # Vérifie si le bot joue
+            await asyncio.sleep(1)  # Attends pendant que la musique joue
+
+        await play_music(ctx)  # Re-joue la musique suivante dans la queue
+
+    except Exception as e:
+        await ctx.send(f"Erreur : Impossible de jouer la musique. {e}")
 
 # Commande pour jouer de la musique
 @bot.command(name='play')
@@ -43,34 +74,14 @@ async def play(ctx, url: str):
             await ctx.send(f"Erreur : Impossible de rejoindre le salon vocal. {e}")
             return
 
-    # Joue la musique
-    try:
-        ydl_opts = {'format': 'bestaudio'}
-        with youtube_dl.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            url2 = info['url']
+    # Ajouter la chanson à la queue
+    music_queue.append({'url': url})
+    await ctx.send(f"Chanson ajoutée à la queue : {url}")
 
-            voice = ctx.voice_client
-            voice.play(discord.FFmpegPCMAudio(url2, executable=FFMPEG_PATH), after=lambda e: print(f"Erreur : {e}" if e else "Lecture terminée"))
-            
-            await ctx.send(f"En train de jouer : **{info['title']}**")
-        while voice.is_playing(): #Checks if voice is playing
-            await asyncio.sleep(1) #While it's playing it sleeps for 1 second
-        else:
-            await asyncio.sleep(15) #If it's not playing it waits 15 seconds
-        while voice.is_playing(): #and checks once again if the bot is not playing
-            break #if it's playing it breaks
-        else:
-            await voice.disconnect() #if not it disconnects
+    # Si le bot n'est pas en train de jouer de la musique, commence à jouer
+    if not ctx.voice_client.is_playing():
+        await play_music(ctx)
 
-    except youtube_dl.DownloadError as e:
-        await ctx.send(f"Erreur de téléchargement : {e}")
-    except discord.errors.ClientException as e:
-        await ctx.send(f"Erreur Discord : {e}")
-    except Exception as e:
-        await ctx.send(f"Erreur : Impossible de jouer la musique. {e}")
-        
-  
 # Commande pour arrêter la musique
 @bot.command(name='stop')
 async def stop(ctx):
@@ -79,6 +90,37 @@ async def stop(ctx):
         await ctx.send("Musique arrêtée et bot déconnecté.")
     else:
         await ctx.send("Je ne suis pas connecté à un salon vocal.")
+
+# Commande pour skip la musique
+@bot.command(name='skip')
+async def skip(ctx):
+    if ctx.voice_client:
+        ctx.voice_client.stop()
+        await ctx.send("Musique skipée.")
+    else:
+        await ctx.send("Je ne suis pas connecté à un salon vocal.")
+
+@bot.command(name='search')
+async def search(ctx, *, query: str):
+    ydl_opts = {'format': 'bestaudio'}
+    with youtube_dl.YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(f"ytsearch:{query}", download=False)
+        url2 = info['entries'][0]['url']  # Prendre la première vidéo trouvée
+        music_queue.append({'url': url2})
+        await ctx.send(f"Chanson ajoutée à la queue : {info['entries'][0]['title']}")
+        
+    # Rejoint le salon vocal si le bot n'est pas déjà connecté
+    voice_channel = ctx.author.voice.channel
+    if not ctx.voice_client:
+        try:
+            await voice_channel.connect()
+        except Exception as e:
+            await ctx.send(f"Erreur : Impossible de rejoindre le salon vocal. {e}")
+            return
+
+    # Si le bot n'est pas en train de jouer, commence à jouer la musique
+    if not ctx.voice_client.is_playing():
+        await play_music(ctx)
 
 # Lancer le bot
 bot.run(os.getenv("JETON"))
